@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech to Text Transcription</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .drag-drop-zone {
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .drag-drop-zone.dragover {
+            background: #e9ecef;
+            border-color: #0d6efd;
+        }
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .status-area {
+            transition: all 0.3s ease;
+        }
+        .recording-controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .record-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background-color: #dc3545;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .record-button.recording {
+            animation: pulse 1.5s infinite;
+        }
+        .audio-visualizer {
+            width: 100%;
+            height: 100px;
+            background: #f8f9fa;
+            margin: 10px 0;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Audio Transcription Tool</h1>
+        
+        <!-- Recording Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Record Audio</h5>
+                <div class="recording-controls">
+                    <button id="recordButton" class="record-button">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <p id="recordingStatus" class="mt-2">Click to start recording</p>
+                    <div id="recordingTime" class="mt-2">00:00</div>
+                </div>
+                <canvas id="audioVisualizer" class="audio-visualizer"></canvas>
+                <div id="recordedAudioContainer" style="display: none;">
+                    <audio id="recordedAudio" controls class="w-100 mb-2"></audio>
+                    <div class="d-flex justify-content-center gap-2">
+                        <button id="saveRecording" class="btn btn-primary">Use Recording</button>
+                        <button id="discardRecording" class="btn btn-danger">Discard</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Upload Files</h5>
+                <div id="dropZone" class="drag-drop-zone mb-3">
+                    <p class="mb-0">Drag and drop audio files here or click to select files</p>
+                    <small class="text-muted">Supported formats: MP3, WAV, WebM (Max size: 16MB)</small>
+                    <input type="file" id="fileInput" multiple accept="audio/*" style="display: none">
+                </div>
+                <div id="fileList" class="file-list mb-3"></div>
+            </div>
+        </div>
+
+        <!-- Settings Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Transcription Settings</h5>
+                <div class="mb-3">
+                    <label for="modelSize" class="form-label">Model Size</label>
+                    <select class="form-select" id="modelSize">
+                        <option value="tiny">Tiny (Fastest, least accurate)</option>
+                        <option value="base">Base</option>
+                        <option value="small" selected>Small (Recommended)</option>
+                        <option value="medium">Medium</option>
+                        <option value="large">Large (Slowest, most accurate)</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="customPrompt" class="form-label">Custom Prompt (Optional)</label>
+                    <input type="text" class="form-control" id="customPrompt" 
+                           placeholder="Enter any specific instructions for the transcription">
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="mb-4">
+            <button id="startButton" class="btn btn-primary" disabled>
+                <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                Start Transcription
+            </button>
+            <button id="downloadButton" class="btn btn-success" disabled>Download Results</button>
+        </div>
+
+        <div id="statusArea" class="alert alert-info status-area" style="display: none;"></div>
+        <div class="progress mb-3" style="display: none;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // DOM Elements
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+            const fileList = document.getElementById('fileList');
+            const startButton = document.getElementById('startButton');
+            const downloadButton = document.getElementById('downloadButton');
+            const statusArea = document.getElementById('statusArea');
+            const progressBar = document.querySelector('.progress-bar');
+            const progress = document.querySelector('.progress');
+            const spinner = startButton.querySelector('.spinner-border');
+
+            // Recording Elements
+            const recordButton = document.getElementById('recordButton');
+            const recordingStatus = document.getElementById('recordingStatus');
+            const recordingTime = document.getElementById('recordingTime');
+            const audioVisualizer = document.getElementById('audioVisualizer');
+            const recordedAudioContainer = document.getElementById('recordedAudioContainer');
+            const recordedAudio = document.getElementById('recordedAudio');
+            const saveRecordingBtn = document.getElementById('saveRecording');
+            const discardRecordingBtn = document.getElementById('discardRecording');
+
+            // Recording variables
+            let mediaRecorder;
+            let audioChunks = [];
+            let startTime;
+            let timerInterval;
+            let audioContext;
+            let analyser;
+            let visualizerContext = audioVisualizer.getContext('2d');
+
+            function showStatus(message, type) {
+                statusArea.style.display = 'block';
+                statusArea.className = `alert alert-${type} status-area`;
+                statusArea.textContent = message;
+            }
+
+            // File Upload Handling
+            function handleFiles(files) {
+                if (files.length === 0) {
+                    showStatus('No files selected', 'warning');
+                    return;
+                }
+
+                const formData = new FormData();
+                let validFiles = 0;
+
+                for (let file of files) {
+                    if (file.type.startsWith('audio/')) {
+                        if (file.size > 16 * 1024 * 1024) {
+                            showStatus(`${file.name} is too large (max 16MB)`, 'warning');
+                            continue;
+                        }
+                        formData.append('files[]', file);
+                        validFiles++;
+                    } else {
+                        showStatus(`${file.name} - not a valid audio file`, 'warning');
+                    }
+                }
+
+                if (validFiles === 0) {
+                    showStatus('No valid audio files selected', 'danger');
+                    return;
+                }
+
+                showStatus('Uploading files...', 'info');
+                startButton.disabled = true;
+                spinner.classList.remove('d-none');
+
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Upload failed: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    fileList.innerHTML = data.files.map(f => 
+                        `<div class="alert alert-success">${f}</div>`
+                    ).join('');
+                    startButton.disabled = false;
+                    showStatus(`Successfully uploaded ${data.files.length} files`, 'success');
+                })
+                .catch(error => {
+                    console.error('Upload error:', error);
+                    showStatus('Error uploading files: ' + error.message, 'danger');
+                    startButton.disabled = true;
+                })
+                .finally(() => {
+                    spinner.classList.add('d-none');
+                });
+            }
+
+            // Recording Functions
+            async function startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    
+                    // Set up audio visualization
+                    audioContext = new AudioContext();
+                    const source = audioContext.createMediaStreamSource(stream);
+                    analyser = audioContext.createAnalyser();
+                    source.connect(analyser);
+                    visualize();
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        recordedAudio.src = URL.createObjectURL(audioBlob);
+                        recordedAudioContainer.style.display = 'block';
+                    };
+
+                    mediaRecorder.start();
+                    startTime = Date.now();
+                    updateTimer();
+                    timerInterval = setInterval(updateTimer, 1000);
+                    
+                    recordButton.classList.add('recording');
+                    recordingStatus.textContent = 'Recording... Click to stop';
+                } catch (err) {
+                    console.error('Error accessing microphone:', err);
+                    showStatus('Error accessing microphone: ' + err.message, 'danger');
+                }
+            }
+
+            function stopRecording() {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                    clearInterval(timerInterval);
+                    recordButton.classList.remove('recording');
+                    recordingStatus.textContent = 'Recording stopped';
+                }
+            }
+
+            function updateTimer() {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                const seconds = (elapsed % 60).toString().padStart(2, '0');
+                recordingTime.textContent = `${minutes}:${seconds}`;
+            }
+
+            function visualize() {
+                const WIDTH = audioVisualizer.width;
+                const HEIGHT = audioVisualizer.height;
+                analyser.fftSize = 2048;
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                visualizerContext.clearRect(0, 0, WIDTH, HEIGHT);
+
+                function draw() {
+                    const drawVisual = requestAnimationFrame(draw);
+                    analyser.getByteTimeDomainData(dataArray);
+                    visualizerContext.fillStyle = 'rgb(200, 200, 200)';
+                    visualizerContext.fillRect(0, 0, WIDTH, HEIGHT);
+                    visualizerContext.lineWidth = 2;
+                    visualizerContext.strokeStyle = 'rgb(0, 0, 0)';
+                    visualizerContext.beginPath();
+
+                    const sliceWidth = WIDTH * 1.0 / bufferLength;
+                    let x = 0;
+
+                    for (let i = 0; i < bufferLength; i++) {
+                        const v = dataArray[i] / 128.0;
+                        const y = v * HEIGHT/2;
+
+                        if (i === 0) {
+                            visualizerContext.moveTo(x, y);
+                        } else {
+                            visualizerContext.lineTo(x, y);
+                        }
+
+                        x += sliceWidth;
+                    }
+
+                    visualizerContext.lineTo(WIDTH, HEIGHT/2);
+                    visualizerContext.stroke();
+                }
+
+                draw();
+            }
+
+            // Event Listeners
+            dropZone.addEventListener('click', () => fileInput.click());
+            
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('dragover');
+            });
+
+            dropZone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('dragover');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('dragover');
+                const files = e.dataTransfer.files;
+                handleFiles(files);
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+
+            recordButton.addEventListener('click', () => {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    stopRecording();
+                } else {
+                    startRecording();
+                }
+            });
+
+            saveRecordingBtn.addEventListener('click', () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const file = new File([audioBlob], `recording_${Date.now()}.webm`, { type: 'audio/webm' });
+                handleFiles([file]);
+                recordedAudioContainer.style.display = 'none';
+            });
+
+            discardRecordingBtn.addEventListener('click', () => {
+                audioChunks = [];
+                recordedAudioContainer.style.display = 'none';
+                recordingStatus.textContent = 'Click to start recording';
+                recordingTime.textContent = '00:00';
+            });
+
+            startButton.addEventListener('click', () => {
+                const modelSize = document.getElementById('modelSize').value;
+                const customPrompt = document.getElementById('customPrompt').value;
+
+                startButton.disabled = true;
+                spinner.classList.remove('d-none');
+                progress.style.display = 'flex';
+                showStatus('Starting transcription...', 'info');
+
+                fetch('/transcribe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model_size: modelSize,
+                        custom_prompt: customPrompt
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    startStatusPolling();
+                })
+                .catch(error => {
+                    showStatus('Error starting transcription: ' + error.message, 'danger');
+                    startButton.disabled = false;
+                    spinner.classList.add('d-none');
+                });
+            });
+
+            function startStatusPolling() {
+                const pollInterval = setInterval(() => {
+                    fetch('/status')
+                        .then(response => response.json())
+                        .then(data => {
+                            progressBar.style.width = `${data.progress}%`;
+                            showStatus(data.message, data.error ? 'danger' : 'info');
+                            
+                            if (!data.is_processing) {
+                                clearInterval(pollInterval);
+                                spinner.classList.add('d-none');
+                                downloadButton.disabled = false;
+                                if (!data.error) {
+                                    showStatus('Transcription completed!', 'success');
+                                }
+                            }
+                        });
+                }, 1000);
+            }
+
+            downloadButton.addEventListener('click', () => {
+                window.location.href = '/download';
+            });
+        });
+    </script>
+</body>
+</html>
